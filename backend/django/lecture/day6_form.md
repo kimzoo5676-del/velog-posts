@@ -150,7 +150,7 @@ def new(request):
 - `ArticleForm()` — 빈 폼 인스턴스 (사용자에게 보여줄 빈 입력창)
 - `ArticleForm(request.POST)` — 사용자가 제출한 데이터가 담긴 폼 (create에서 사용)
 
-### new.html 템플릿 (수정 필요 action 비어있을 때 동작원리)
+### new.html 템플릿
 
 ```html
 <h1>NEW</h1>
@@ -184,6 +184,23 @@ Django가 자동으로 해주는 것들:
 | `maxlength="10"` | `forms.py`의 `max_length=10` 자동 반영 |
 | `required` | 필수 입력 속성 자동 추가 |
 | `id="id_title"` | id 자동 생성 |
+
+### 💡 `action=""` (빈 문자열)일 때 동작 원리
+
+HTML 스펙상 `action` 속성이 **빈 문자열**이면 현재 페이지의 URL로 그대로 제출된다.
+
+예를 들어 `/articles/create/` 페이지에 있는 폼이라면, `action`이 비어있어도 `POST /articles/create/`로 요청이 날아간다.
+
+```html
+<!-- 아래 두 가지는 /articles/create/ 페이지에서 동작이 동일하다 -->
+<form action="" method="POST">
+<form action="{% url 'articles:create' %}" method="POST">
+```
+
+나중에 12번 섹션처럼 GET/POST를 하나의 뷰로 통합하면, 폼이 있는 페이지와 데이터를 받는 뷰가 동일한 URL이라서 `action=""`도 자연스럽게 동작한다.
+
+> ⚠️ 단, `action=""`은 암묵적인 동작이라 URL 구조가 바뀌면 의도치 않게 다른 곳으로 제출될 수 있다.  
+> **명시적으로 `{% url ... %}`을 쓰는 게 권장된다.**
 
 ---
 
@@ -387,7 +404,7 @@ def create(request):
 > `is_valid()`가 True면 redirect로 함수가 끝나버리고,  
 > False면 if 블록을 건너뛰고 아래 render로 자연스럽게 내려오는 구조다.
 
-### edit 뷰
+### edit (views.py)
 
 ```python
 def edit(request, pk):
@@ -411,7 +428,7 @@ def edit(request, pk):
 {{ form }}   <!-- 기존값까지 자동으로 채워진 채로 렌더링! -->
 ```
 
-### update 뷰
+### update (views.py)
 
 ```python
 def update(request, pk):
@@ -535,6 +552,59 @@ def update(request, pk):
 > `render` → 화면(파일)을 그려주는 함수 → 파일 경로 → `/`  
 > `redirect` → URL로 보내는 함수 → URL 이름 → `:`  
 > 함수의 목적을 기억하면 자연스럽게 연상된다!
+
+### ⚠️ context에 `form`이 없을 때 발생하는 오류
+
+통합 뷰 구조를 잘못 짜면 `form` 변수가 **정의되지 않은 채로 render에 도달**하는 경우가 생긴다.
+
+**가장 흔한 실수 패턴:**
+
+```python
+def create(request):
+    if request.method == 'POST':
+        form = ArticleForm(request.POST)
+        if form.is_valid():
+            article = form.save()
+            return redirect('articles:detail', article.pk)
+        # ← 유효성 검사 실패 시 여기서 빠져나옴 → form은 정의되어 있음 ✅
+    else:
+        form = ArticleForm()
+    
+    context = {'form': form}  # ← POST + 유효성 실패면 form이 위에서 정의됨 ✅
+    return render(request, 'articles/create.html', context)
+```
+
+**오류가 나는 잘못된 패턴:**
+
+```python
+def create(request):
+    if request.method == 'POST':
+        form = ArticleForm(request.POST)
+        if form.is_valid():
+            article = form.save()
+            return redirect('articles:detail', article.pk)
+        # 유효성 실패 시 아무것도 안 하고 아래로 내려옴
+    # else 없음! → GET 요청이 오면 form이 아예 정의되지 않음 ❌
+
+    context = {'form': form}  # ← UnboundLocalError 발생!
+    return render(request, 'articles/create.html', context)
+```
+
+```
+UnboundLocalError: local variable 'form' referenced before assignment
+```
+
+**발생 원인 정리:**
+
+| 요청 경로 | form 정의 여부 |
+|---|---|
+| GET 요청 → else 블록 있음 | ✅ `form = ArticleForm()` 정의됨 |
+| POST + 유효성 통과 | ✅ redirect로 함수 종료, render 도달 안 함 |
+| POST + 유효성 실패 | ✅ `form = ArticleForm(request.POST)` 정의됨 |
+| GET 요청 → else 블록 없음 | ❌ `form` 미정의 → **UnboundLocalError** |
+
+> 💡 **해결 핵심** : `if request.method == 'POST'` 분기에 반드시 `else`를 붙여서  
+> GET 요청일 때도 `form`이 항상 정의되도록 보장해야 한다!
 
 ---
 
